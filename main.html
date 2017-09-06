@@ -1,0 +1,180 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="description" content="main.html">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Untitled</title>
+        <link rel="stylesheet" href="style.css">
+        <link rel="author" href="humans.txt">
+        <script src="three.js"></script>
+        <script src="GPUComputationRenderer.js"></script>
+
+        <!-- shader to update positions and velocities of the particles. -->
+        <script id="particleCalculator" type="x-shader/x-fragment">
+            uniform float deltaTime;
+            uniform vec2 mousePos;
+            const float width = resolution.x;
+            const float k = 1.0;
+            const float weight = 0.5;
+            const float gravity = 2.0;
+            void main()
+            {
+                vec2 uv = gl_FragCoord.xy / resolution.xy;
+                vec4 posAndVelocity = texture2D(textureParticle, uv);
+                vec2 pos = posAndVelocity.xy;
+                vec2 velocity = posAndVelocity.zw;
+                vec2 force = vec2(0.0, 0.0);
+                for (float i = 0.0; i < width; ++i)
+                {
+                    vec2 ref = vec2(i + 0.5, 0.5) / resolution.xy;
+                    vec2 pos2 = texture2D(textureParticle, ref).xy;
+                    vec2 delta = pos - pos2;
+                    float len2 = dot(delta, delta);
+                    force += (k / (len2 * len2) - k / len2) * normalize(delta);
+                }
+
+                pos += velocity * deltaTime;
+                velocity += force / weight + gravity * normalize(pos - mousePos);
+                gl_FragColor = vec4(pos, velocity);
+            }
+        </script>
+
+        <script id="vertexShader" type="x-shader/x-fragment">
+            attribute vec2 reference;
+            uniform sampler2D posAndVelocity;
+            void main()
+            {
+                vec2 pos = texture2D(posAndVelocity, reference).xy;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0, 1.0);
+                gl_PointSize = 5.0;
+            }
+        </script>
+
+        <script id="fragmentShader" type="x-shader/x-fragment">
+            void main()
+            {
+                gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+            }
+        </script>
+
+        <script>
+            var PARTICLE_COUNT = 256;
+            var renderer, scene, camera, gpuCompute;
+            var renderParticles;
+            var particleShaderGeo, particleShaderMat;
+            var particleVar, uniforms;
+            var mouseX, mouseY;
+            var clock = new THREE.Clock();
+
+            window.onload = function() {
+                init();
+                animate();
+            };
+
+            function init()
+            {
+                // Initialize renderers and others.
+                var width = document.getElementById('main-div').clientWidth;
+                var height = document.getElementById('main-div').clientHeight;
+                renderer = new THREE.WebGLRenderer({
+                    canvas: document.getElementById('main')
+                });
+                renderer.setSize(width, height);
+                scene = new THREE.Scene();
+                camera = new THREE.OrthographicCamera(0, width, 0, height, 0, 100);
+                camera.lookAt(new THREE.Vector3(0, 0, 1));
+
+                // Add event listeners.
+                document.addEventListener('mousemove', function(e) {
+                    mouseX = e.clientX;
+                    mouseY = e.clientY;
+                    uniforms.mousePos.value =
+                        new THREE.Vector2(mouseX, mouseY);
+                }, false);
+
+                window.addEventListener('resize', function() {
+                    var width = document.getElementById('main-div').clientWidth;
+                    var height = document.getElementById('main-div').clientHeight;
+                    camera.right = width;
+                    camera.bottom = height;
+                    renderer.setSize(width, height);
+                }, false);
+
+                // Initialize particle system.
+                particleShaderGeo = new THREE.BufferGeometry();
+                var referenceAttr = new THREE.BufferAttribute(new Float32Array(PARTICLE_COUNT * 2), 2);
+                particleShaderGeo.addAttribute('reference', referenceAttr);
+                for (var i = 0; i < PARTICLE_COUNT; i ++)
+                {
+                    referenceAttr[i * 2] = (i + 0.5) / PARTICLE_COUNT;
+                    referenceAttr[i * 2 + 1] = 0.5;
+                }
+
+                particleShaderMat = new THREE.ShaderMaterial({
+                    uniforms: {
+                        'posAndVelocity': { value: null }
+                    },
+                    vertexShader: document.getElementById('vertexShader').textContent,
+                    fragmentShader: document.getElementById('fragmentShader').textContent,
+
+
+                    blending:       THREE.AdditiveBlending,
+                    depthTest:      false,
+                    transparent:    true
+
+                })
+                renderParticles = new THREE.Points(particleShaderGeo, particleShaderMat);
+                scene.add(renderParticles);
+
+                // Initialize gpu computer.
+                gpuCompute = new GPUComputationRenderer(PARTICLE_COUNT, 1, renderer);
+                var particleTexture = gpuCompute.createTexture();
+                var textureArray = particleTexture.image.data;
+                for (var i = 0; i < textureArray.length; i += 4)
+                {
+                    var x = Math.random() * 50.0 + width / 2.0 - 25.0;
+                    var y = Math.random() * 50.0 + height / 2.0 - 25.0;
+                    var vx = Math.random() * 2.0 - 1.0;
+                    var vy = Math.random() * 2.0 - 1.0;
+                    textureArray[i] = x;
+                    textureArray[i + 1] = y;
+                    textureArray[i + 2] = vx;
+                    textureArray[i + 3] = vy;
+                }
+
+                particleVar = gpuCompute.addVariable(
+                    'textureParticle',
+                    document.getElementById('particleCalculator').textContent,
+                    particleTexture);
+                gpuCompute.setVariableDependencies(particleVar, [particleVar]);
+
+                uniforms = particleVar.material.uniforms;
+                uniforms.deltaTime = { value: 0.0 };
+                uniforms.mousePos =
+                    new THREE.Uniform(new THREE.Vector2(width / 2.0, height / 2.0));
+
+                var error = gpuCompute.init();
+                if (error != null)
+                    console.error(error);
+            }
+
+            function animate()
+            {
+                requestAnimationFrame(animate);
+
+                uniforms.deltaTime.value = clock.getDelta();
+                gpuCompute.compute();
+                particleShaderMat.uniforms.posAndVelocity.value =
+                    gpuCompute.getCurrentRenderTarget(particleVar).texture;
+                renderer.render(scene, camera);
+            }
+        </script>
+    </head>
+
+    <body>
+        <div id="main-div">
+            <canvas id="main"></canvas>
+        </div>
+    </body>
+</html>
