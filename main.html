@@ -15,30 +15,56 @@
             uniform float deltaTime;
             uniform vec2 mousePos;
             const float width = resolution.x;
-            const float k = 0.05;
-            const float weight = 0.1;
-            const float gravity = 2.0;
+            const float k = 0.1;
+            const float weight = 0.05;
+            const float gravity = 0.01;
+            const float rho0 = 0.1;
+            const float d = 10.0;
+            const float d2 = d * d;
+            const float pi = 3.1415926535897932384626;
+            const float poly6Parameter = 315.0 / (64.0 * pi);
+            const float poly6dParameter = 945.0 / (32.0 * pi * d);
+
+            float poly6(float r)
+            {
+                float rd = min(r / d, 1.0);
+                float r2 = (1.0 - rd * rd) / d;
+                return poly6Parameter / (r2 * r2 * r2);
+            }
+
+            vec2 poly6d(vec2 x)
+            {
+                float len2 = dot(x, x);
+                if (len2 < 1e-6)
+                    return vec2(0.0, 0.0);
+                float r2 = max(1.0 / d2 - len2 / (d2 * d2), 0.0);
+                return poly6dParameter * r2 * r2 * x;
+            }
+
+            float rho;
+            float pressureParameter;
+
             void main()
             {
+                rho = poly6(0.0);
+                pressureParameter = k * (rho - rho0) / rho;
+
                 vec2 uv = gl_FragCoord.xy / resolution.xy;
                 vec4 posAndVelocity = texture2D(textureParticle, uv);
                 vec2 pos = posAndVelocity.xy;
                 vec2 velocity = posAndVelocity.zw;
-                vec2 force = vec2(0.0, 0.0);
+                vec2 pressure = vec2(0.0, 0.0);
                 for (float i = 0.0; i < width; ++i)
                 {
                     vec2 ref = vec2(i + 0.5, 0.5) / resolution.xy;
                     vec2 pos2 = texture2D(textureParticle, ref).xy;
                     vec2 delta = pos - pos2;
-                    float len2 = dot(delta, delta);
-                    if (len2 > 1e-6)
-                        force += (k / (len2 * len2) - k / len2) * normalize(delta);
+                    pressure += weight * pressureParameter * poly6d(delta);
                 }
 
-                pos += velocity * deltaTime;
-                velocity += force / weight - gravity * normalize(pos - mousePos);
+                pos += velocity * deltaTime * 100.0;
+                velocity += - pressure / rho - gravity * normalize(pos - mousePos);
                 gl_FragColor = vec4(pos, velocity);
-                //gl_FragColor = posAndVelocity;
             }
         </script>
 
@@ -48,7 +74,7 @@
             {
                 vec2 pos = texture2D(posAndVelocity, position.xy).xy;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, -1.0, 1.0);
-                gl_PointSize = 5.0;
+                gl_PointSize = 2.0;
             }
         </script>
 
@@ -60,7 +86,7 @@
         </script>
 
         <script>
-            var PARTICLE_COUNT = 1024;
+            var PARTICLE_COUNT = 2048;
             var renderer, scene, camera, gpuCompute;
             var renderParticles;
             var particleShaderGeo, particleShaderMat;
@@ -87,12 +113,12 @@
                 camera.lookAt(new THREE.Vector3(0, 0, -1));
 
                 // Add event listeners.
-                document.addEventListener('mousemove', function(e) {
+                /*document.addEventListener('mousemove', function(e) {
                     mouseX = e.clientX;
                     mouseY = e.clientY;
                     uniforms.mousePos.value =
                         new THREE.Vector2(mouseX, mouseY);
-                }, false);
+                }, false);*/
 
                 window.addEventListener('resize', function() {
                     var width = document.getElementById('main-div').clientWidth;
@@ -138,8 +164,8 @@
                 var textureArray = particleTexture.image.data;
                 for (var i = 0; i < textureArray.length; i += 4)
                 {
-                    var x = Math.random() * 400.0 + width / 2.0 - 200.0;
-                    var y = Math.random() * 400.0 + height / 2.0 - 200.0;
+                    var x = Math.random() * 600.0 + width / 2.0 - 300.0;
+                    var y = Math.random() * 600.0 + height / 2.0 - 300.0;
                     var vx = Math.random() * 2.0 - 1.0;
                     var vy = Math.random() * 2.0 - 1.0;
                     textureArray[i] = x;
