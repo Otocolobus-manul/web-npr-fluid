@@ -15,8 +15,8 @@
             uniform float deltaTime;
             uniform vec2 mousePos;
             const float width = resolution.x;
-            const float k = 1.0;
-            const float weight = 0.5;
+            const float k = 0.05;
+            const float weight = 0.1;
             const float gravity = 2.0;
             void main()
             {
@@ -25,19 +25,20 @@
                 vec2 pos = posAndVelocity.xy;
                 vec2 velocity = posAndVelocity.zw;
                 vec2 force = vec2(0.0, 0.0);
-                /*for (float i = 0.0; i < width; ++i)
+                for (float i = 0.0; i < width; ++i)
                 {
                     vec2 ref = vec2(i + 0.5, 0.5) / resolution.xy;
                     vec2 pos2 = texture2D(textureParticle, ref).xy;
                     vec2 delta = pos - pos2;
                     float len2 = dot(delta, delta);
-                    force += (k / (len2 * len2) - k / len2) * normalize(delta);
+                    if (len2 > 1e-6)
+                        force += (k / (len2 * len2) - k / len2) * normalize(delta);
                 }
 
                 pos += velocity * deltaTime;
-                velocity += force / weight + gravity * normalize(pos - mousePos);
-                gl_FragColor = vec4(pos, velocity);*/
-                gl_FragColor = posAndVelocity;
+                velocity += force / weight - gravity * normalize(pos - mousePos);
+                gl_FragColor = vec4(pos, velocity);
+                //gl_FragColor = posAndVelocity;
             }
         </script>
 
@@ -59,7 +60,7 @@
         </script>
 
         <script>
-            var PARTICLE_COUNT = 256;
+            var PARTICLE_COUNT = 1024;
             var renderer, scene, camera, gpuCompute;
             var renderParticles;
             var particleShaderGeo, particleShaderMat;
@@ -103,14 +104,17 @@
 
                 // Initialize particle system.
                 particleShaderGeo = new THREE.BufferGeometry();
-                var referenceAttr = new THREE.BufferAttribute(new Float32Array(PARTICLE_COUNT * 3), 3);
-                particleShaderGeo.addAttribute('position', referenceAttr);
+                var referenceAttr = new Float32Array(PARTICLE_COUNT * 3);
                 for (var i = 0; i < PARTICLE_COUNT; i++)
                 {
                     referenceAttr[i * 3] = (i + 0.5) / PARTICLE_COUNT;
                     referenceAttr[i * 3 + 1] = 0.5;
                     referenceAttr[i * 3 + 2] = 0.0;
+                    //referenceAttr[i * 3] = Math.random() * 50.0 + width / 2.0 - 25.0;
+                    //referenceAttr[i * 3 + 1] = Math.random() * 50.0 + height / 2.0 - 25.0;
+                    //referenceAttr[i * 3 + 2] = -1.0;
                 }
+                particleShaderGeo.addAttribute('position', new THREE.BufferAttribute(referenceAttr, 3));
 
                 particleShaderMat = new THREE.ShaderMaterial({
                     uniforms: {
@@ -134,8 +138,8 @@
                 var textureArray = particleTexture.image.data;
                 for (var i = 0; i < textureArray.length; i += 4)
                 {
-                    var x = Math.random() * 50.0 + width / 2.0 - 25.0;
-                    var y = Math.random() * 50.0 + height / 2.0 - 25.0;
+                    var x = Math.random() * 400.0 + width / 2.0 - 200.0;
+                    var y = Math.random() * 400.0 + height / 2.0 - 200.0;
                     var vx = Math.random() * 2.0 - 1.0;
                     var vy = Math.random() * 2.0 - 1.0;
                     textureArray[i] = x;
