@@ -89,7 +89,7 @@
  * // And compute each frame, before rendering to screen:
  * gpuCompute.doRenderTarget( myFilter1, myRenderTarget );
  * gpuCompute.doRenderTarget( myFilter2, outputRenderTarget );
- * 
+ *
  *
  *
  * @param {int} sizeX Computation problem size is always 2d: sizeX * sizeY elements.
@@ -137,7 +137,7 @@ function GPUComputationRenderer( sizeX, sizeY, renderer ) {
 		this.variables.push( variable );
 
 		return variable;
-		
+
 	};
 
 	this.setVariableDependencies = function( variable, dependencies ) {
@@ -177,7 +177,7 @@ function GPUComputationRenderer( sizeX, sizeY, renderer ) {
 
 				for ( var d = 0; d < variable.dependencies.length; d++ ) {
 
-					var depVar = variable.dependencies[ d ];
+					var depVar = variable.dependencies[ d ].variable;
 
 					if ( depVar.name !== variable.name ) {
 
@@ -226,10 +226,13 @@ function GPUComputationRenderer( sizeX, sizeY, renderer ) {
 				var uniforms = variable.material.uniforms;
 				for ( var d = 0, dl = variable.dependencies.length; d < dl; d++ ) {
 
-					var depVar = variable.dependencies[ d ];
+					var isCascade = variable.dependencies[ d ].isCascade;
+					var depVar = variable.dependencies[ d ].variable;
 
-					uniforms[ depVar.name ].value = depVar.renderTargets[ currentTextureIndex ].texture;
-
+					if (!isCascade)
+						uniforms[ depVar.name ].value = depVar.renderTargets[ currentTextureIndex ].texture;
+					else
+						uniforms[ depVar.name ].value = depVar.renderTargets[ nextTextureIndex ].texture;
 				}
 
 			}

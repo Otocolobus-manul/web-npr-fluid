@@ -11,83 +11,106 @@
         <script src="GPUComputationRenderer.js"></script>
 
         <!-- shader to update positions and velocities of the particles. -->
-        <script id="particleCalculator" type="x-shader/x-fragment">
+        <script id="particle-simulator-r1" type="x-shader/x-fragment">
+        // Round 1: calculate current position and density.
+            uniform float sceneWidth;
+            uniform float deltaTime;
+            const float width = resolution.x;
+            const float d = 10.0;
+            const float k = 0.4, kNear = 0.05;
+            const float rho0 = 4.0;
+            const float g = 5.0;
+
+            vec2 getNowPos(vec4 posAndVelocity)
+            {
+                vec2 lastPos = posAndVelocity.xy, velocity = posAndVelocity.zw;
+                // return lastPos + (velocity - vec2(0.0, g * min(lastPos.y / d, 1.0)) * deltaTime) * deltaTime;
+                return lastPos + (velocity - vec2(0.0, g) * deltaTime) * deltaTime;
+            }
+
+            void main()
+            {
+                vec2 uv = gl_FragCoord.xy / resolution.xy;
+                vec2 nowPos = getNowPos(texture2D(particleTexture, uv));
+                float rho = 0.0, rhoNear = 0.0;
+                for (float i = 0.5; i < width; ++i)
+                {
+                    if (i == gl_FragCoord.x)
+                        continue;
+                    vec2 ref = vec2(i, 0.5) / resolution.xy;
+                    vec2 nowPos2 = getNowPos(texture2D(particleTexture, ref));
+                    float cur = max(1.0 - distance(nowPos2, nowPos) / d, 0.0), cur2 = cur * cur;
+                    rho += cur2;
+                    rhoNear += cur2 * cur;
+                }
+                gl_FragColor = vec4(k * (rho - rho0), kNear * rhoNear, nowPos);
+            }
+        </script>
+
+        <script id="particle-simulator-r2" type="x-shader/x-fragment">
+        // Round 2: density relaxation.
             uniform float deltaTime;
             uniform vec2 mousePos;
             uniform float sceneWidth;
             const float width = resolution.x;
-            const float k = 0.1;
-            const float weight = 0.01;
             const float gravity = 10000.0;
-            const float rho0 = 0.0001;
             const float d = 10.0;
-            const float d2 = d * d;
-            const float pi = 3.1415926535897932384626;
-            const float poly6Parameter = 315.0 / (64.0 * pi);
-            const float poly6dParameter = 45.0 / pi;
             const float gravityR = 50.0;
             const float gravityParameter = gravity / (gravityR * gravityR * gravityR);
-
-            float poly6(float r)
-            {
-                float rd = min(r / d, 1.0);
-                float r2 = (1.0 - rd * rd) / d;
-                return poly6Parameter * r2 * r2 * r2;
-            }
-
-            vec2 poly6d(vec2 x)
-            {
-                float len = length(x);
-                if (len < 1e-6)
-                    return vec2(0.0, 0.0);
-                float r2 = (1.0 - min(len / d, 1.0)) / d;
-                return poly6dParameter * r2 * r2 * r2 * (x / len);
-            }
-
-            float rho;
-            float pressureParameter;
+            const float eps = 1e-6;
 
             void main()
             {
-                rho = poly6(0.0) * weight;
-                pressureParameter = k * (rho - rho0) / rho;
-
                 vec2 uv = gl_FragCoord.xy / resolution.xy;
-                vec4 posAndVelocity = texture2D(textureParticle, uv);
-                vec2 pos = posAndVelocity.xy;
-                vec2 velocity = posAndVelocity.zw;
-                vec2 pressure = vec2(0.0, 0.0);
-                for (float i = 0.0; i < width; ++i)
+                vec4 pos = texture2D(particleTexture, uv);
+                vec4 density = texture2D(densityTexture, uv);
+                float p = density.x, pNear = density.y;
+                vec2 nowPos = density.zw;
+                vec2 deltaPos = vec2(0.0, 0.0);
+                float minX = min(nowPos.x, sceneWidth - nowPos.x) - eps, minY = nowPos.y - eps;
+                for (float i = 0.5; i < width; ++i)
                 {
-                    vec2 ref = vec2(i + 0.5, 0.5) / resolution.xy;
-                    vec2 pos2 = texture2D(textureParticle, ref).xy;
-                    vec2 delta = pos - pos2;
-                    pressure += weight * pressureParameter * poly6d(delta);
+                    if (i == gl_FragCoord.x)
+                        continue;
+                    vec2 ref = vec2(i, 0.5) / resolution.xy;
+                    vec4 density2 = texture2D(densityTexture, ref);
+                    float p2 = density2.x, pNear2 = density2.y;
+                    vec2 nowPos2 = density2.zw;
+                    vec2 delta = nowPos - nowPos2;
+                    float len = length(delta) + eps;
+                    //if (abs(nowPos2.x - nowPos.x) > minX || abs(nowPos2.y - nowPos.y) > minY)
+                        //len = d;
+                    float len_ = max(1.0 - len / d, 0.0);
+                    deltaPos += (((pNear + pNear2) * len_ + (p + p2)) * len_) * (delta / len);
                 }
+                nowPos += deltaTime * deltaTime / 2.0 * deltaPos;
+                vec2 nowVelocity = (nowPos - pos.xy) / deltaTime;
 
                 /*vec2 direction = mousePos - pos;
                 velocity += pressure / rho;
                 velocity += min(length(direction) * gravityParameter, gravity / dot(direction, direction)) * normalize(direction);
                 pos += velocity * deltaTime;*/
-                velocity += pressure / rho + vec2(0.0, -10.0);
-                pos += velocity * deltaTime;
-                if (pos.y < 0.0)
+                if (nowPos.y < 0.0)
                 {
-                    pos.y = 0.0;
-                    velocity.y = -velocity.y / 10.0;
+                    nowPos.y = 0.0;
+                    nowVelocity.y = -nowVelocity.y / 3.0;
                 }
-                if (pos.x < 0.0)
+                if (nowPos.x < 0.0)
                 {
-                    pos.x = 0.0;
-                    velocity.x = -velocity.x / 10.0;
+                    nowPos.x = 0.0;
+                    nowVelocity.x = -nowVelocity.x / 3.0;
                 }
-                if (pos.x > sceneWidth)
+                if (nowPos.x > sceneWidth)
                 {
-                    pos.x = sceneWidth;
-                    velocity.x = -velocity.x / 10.0;
+                    nowPos.x = sceneWidth;
+                    nowVelocity.x = -nowVelocity.x / 3.0;
                 }
-                gl_FragColor = vec4(pos, velocity);
+                gl_FragColor = vec4(nowPos, nowVelocity);
             }
+        </script>
+
+        <script id="particle-simulator-r3" type="x-shader/x-fragment">
+        // Round 3: handle viscosity.
         </script>
 
         <script id="vertexShader" type="x-shader/x-fragment">
@@ -96,25 +119,16 @@
             {
                 vec2 pos = texture2D(posAndVelocity, position.xy).xy;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, -1.0, 1.0);
-                gl_PointSize = 10.0;
+                gl_PointSize = 3.0;
             }
         </script>
 
         <script id="fragmentShader" type="x-shader/x-fragment">
-            const float pi = 3.1415926535897932384626;
-            const float d = 10.0;
-            const float poly6Parameter = 315.0 / (64.0 * pi);
-            float poly6(float r)
-            {
-                float rd = min(r / d, 1.0);
-                float r2 = (1.0 - rd * rd) / d;
-                return poly6Parameter * r2 * r2 * r2;
-            }
+            const float d = 3.0;
             void main()
             {
                 vec2 uv = (gl_PointCoord - vec2(0.5, 0.5)) * 2.0;
-                //float strenth = 1.0 - min(length(uv), 1.0);
-                float strenth = poly6(length(uv) * 10.0) * 500.0;
+                float strenth = 1.0 - min(length(uv), 1.0);
                 gl_FragColor = vec4(1.0, 1.0, 1.0, strenth);
             }
         </script>
@@ -124,7 +138,8 @@
             var renderer, scene, camera, gpuCompute;
             var renderParticles;
             var particleShaderGeo, particleShaderMat;
-            var particleVar, uniforms;
+
+            var simR1Var, simR1Uniform, simR2Var, simR2Uniform;
             var mouseX, mouseY;
             var clock = new THREE.Clock();
 
@@ -149,7 +164,7 @@
                 /*document.addEventListener('mousemove', function(e) {
                     mouseX = e.clientX;
                     mouseY = e.clientY;
-                    uniforms.mousePos.value =
+                    simR2Uniform.mousePos.value =
                         new THREE.Vector2(mouseX, mouseY);
                 }, false);*/
 
@@ -193,8 +208,9 @@
 
                 // Initialize gpu computer.
                 gpuCompute = new GPUComputationRenderer(PARTICLE_COUNT, 1, renderer);
-                var particleTexture = gpuCompute.createTexture();
-                var textureArray = particleTexture.image.data;
+                var simR1Texture = gpuCompute.createTexture();
+                var simR2Texture = gpuCompute.createTexture();
+                var textureArray = simR2Texture.image.data;
                 for (var i = 0; i < textureArray.length; i += 4)
                 {
                     var x = Math.random() * 200.0 + width / 2.0 - 100.0;
@@ -203,23 +219,30 @@
                     var vy = Math.random() * 2.0 - 1.0;
                     textureArray[i] = x;
                     textureArray[i + 1] = y;
-                    // textureArray[i + 2] = vx;
-                    // textureArray[i + 3] = vy;
                     textureArray[i + 2] = 0.0;
                     textureArray[i + 3] = 0.0;
                 }
 
-                particleVar = gpuCompute.addVariable(
-                    'textureParticle',
-                    document.getElementById('particleCalculator').textContent,
-                    particleTexture);
-                gpuCompute.setVariableDependencies(particleVar, [particleVar]);
+                simR1Var = gpuCompute.addVariable(
+                    'densityTexture',
+                    document.getElementById('particle-simulator-r1').textContent,
+                    simR1Texture);
+                simR2Var = gpuCompute.addVariable(
+                    'particleTexture',
+                    document.getElementById('particle-simulator-r2').textContent,
+                    simR2Texture);
+                gpuCompute.setVariableDependencies(simR1Var, [{ variable: simR2Var, isCascade: false }]);
+                gpuCompute.setVariableDependencies(simR2Var, [{ variable: simR1Var, isCascade: true },
+                                                              { variable: simR2Var, isCascade: false }]);
 
-                uniforms = particleVar.material.uniforms;
-                uniforms.deltaTime = { value: 0.0 };
-                uniforms.mousePos =
+                simR1Uniform = simR1Var.material.uniforms;
+                simR1Uniform.deltaTime = { value: 0.0 };
+                simR1Uniform.sceneWidth = { value: width };
+                simR2Uniform = simR2Var.material.uniforms;
+                simR2Uniform.deltaTime = { value: 0.0 };
+                simR2Uniform.mousePos =
                     new THREE.Uniform(new THREE.Vector2(width / 2.0, height / 2.0));
-                uniforms.sceneWidth = { value: width };
+                simR2Uniform.sceneWidth = { value: width };
 
                 var error = gpuCompute.init();
                 if (error != null)
@@ -230,10 +253,14 @@
             {
                 requestAnimationFrame(animate);
 
-                uniforms.deltaTime.value = clock.getDelta();
+                var timeDelta = clock.getDelta();
+                if (timeDelta == 0)
+                    return;
+                simR1Uniform.deltaTime.value = timeDelta * 10.0;
+                simR2Uniform.deltaTime.value = timeDelta * 10.0;
                 gpuCompute.compute();
                 particleShaderMat.uniforms.posAndVelocity.value =
-                    gpuCompute.getCurrentRenderTarget(particleVar).texture;
+                    gpuCompute.getCurrentRenderTarget(simR2Var).texture;
                 renderer.render(scene, camera);
             }
         </script>
