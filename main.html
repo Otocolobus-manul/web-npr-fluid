@@ -24,8 +24,8 @@
             vec2 getNowPos(vec4 posAndVelocity)
             {
                 vec2 lastPos = posAndVelocity.xy, velocity = posAndVelocity.zw;
-                // return lastPos + (velocity - vec2(0.0, g * min(lastPos.y / d, 1.0)) * deltaTime) * deltaTime;
-                return lastPos + (velocity - vec2(0.0, g) * deltaTime) * deltaTime;
+                return lastPos + (velocity - vec2(0.0, g * min(lastPos.y / d, 1.0)) * deltaTime) * deltaTime;
+                // return lastPos + (velocity - vec2(0.0, g) * deltaTime) * deltaTime;
             }
 
             void main()
@@ -58,7 +58,15 @@
             const float gravityR = 50.0;
             const float gravityParameter = gravity / (gravityR * gravityR * gravityR);
             const float eps = 1e-6;
-
+            
+            vec2 getPressure(in vec2 posI, in vec2 posJ, in float pNear, in float p)
+            {
+                vec2 delta = posI - posJ;
+                float len = length(delta) + eps;
+                float len_ = max(1.0 - len / d, 0.0);
+                return ((pNear * len_ + p) * len_) * (delta / len);
+            }
+            
             void main()
             {
                 vec2 uv = gl_FragCoord.xy / resolution.xy;
@@ -67,7 +75,6 @@
                 float p = density.x, pNear = density.y;
                 vec2 nowPos = density.zw;
                 vec2 deltaPos = vec2(0.0, 0.0);
-                float minX = min(nowPos.x, sceneWidth - nowPos.x) - eps, minY = nowPos.y - eps;
                 for (float i = 0.5; i < width; ++i)
                 {
                     if (i == gl_FragCoord.x)
@@ -76,12 +83,14 @@
                     vec4 density2 = texture2D(densityTexture, ref);
                     float p2 = density2.x, pNear2 = density2.y;
                     vec2 nowPos2 = density2.zw;
-                    vec2 delta = nowPos - nowPos2;
-                    float len = length(delta) + eps;
-                    //if (abs(nowPos2.x - nowPos.x) > minX || abs(nowPos2.y - nowPos.y) > minY)
-                        //len = d;
-                    float len_ = max(1.0 - len / d, 0.0);
-                    deltaPos += (((pNear + pNear2) * len_ + (p + p2)) * len_) * (delta / len);
+                    vec2 mirrorPos1 = vec2(nowPos2.x, -nowPos2.y - eps);
+                    vec2 mirrorPos2 = vec2(-nowPos2.x - eps, nowPos2.y);
+                    vec2 mirrorPos3 = vec2(sceneWidth * 2.0 - nowPos2.x + eps, nowPos2.y);
+                    float pNearSum = pNear + pNear2, pSum = p + p2;
+                    deltaPos += getPressure(nowPos, nowPos2, pNearSum, pSum);
+                    deltaPos += getPressure(nowPos, mirrorPos1, pNearSum, pSum);
+                    deltaPos += getPressure(nowPos, mirrorPos2, pNearSum, pSum);
+                    deltaPos += getPressure(nowPos, mirrorPos3, pNearSum, pSum);
                 }
                 nowPos += deltaTime * deltaTime / 2.0 * deltaPos;
                 vec2 nowVelocity = (nowPos - pos.xy) / deltaTime;
@@ -93,17 +102,17 @@
                 if (nowPos.y < 0.0)
                 {
                     nowPos.y = 0.0;
-                    nowVelocity.y = -nowVelocity.y / 3.0;
+                    nowVelocity.y = -nowVelocity.y / 10.0;
                 }
                 if (nowPos.x < 0.0)
                 {
                     nowPos.x = 0.0;
-                    nowVelocity.x = -nowVelocity.x / 3.0;
+                    nowVelocity.x = -nowVelocity.x / 10.0;
                 }
                 if (nowPos.x > sceneWidth)
                 {
                     nowPos.x = sceneWidth;
-                    nowVelocity.x = -nowVelocity.x / 3.0;
+                    nowVelocity.x = -nowVelocity.x / 10.0;
                 }
                 gl_FragColor = vec4(nowPos, nowVelocity);
             }
@@ -134,7 +143,7 @@
         </script>
 
         <script>
-            var PARTICLE_COUNT = 8192;
+            var PARTICLE_COUNT = 4096;
             var renderer, scene, camera, gpuCompute;
             var renderParticles;
             var particleShaderGeo, particleShaderMat;
