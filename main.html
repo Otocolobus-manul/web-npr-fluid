@@ -21,7 +21,8 @@
             const float rho0 = 4.0;
             const float g = 5.0;
 
-            vec2 getNowPos(vec4 posAndVelocity)
+            #define getRho(posI, posJ) (max(1.0 - distance(posJ, posI) / d, 0.0))
+            vec2 getNowPos(in vec4 posAndVelocity)
             {
                 vec2 lastPos = posAndVelocity.xy, velocity = posAndVelocity.zw;
                 return lastPos + (velocity - vec2(0.0, g * min(lastPos.y / d, 1.0)) * deltaTime) * deltaTime;
@@ -39,9 +40,16 @@
                         continue;
                     vec2 ref = vec2(i, 0.5) / resolution.xy;
                     vec2 nowPos2 = getNowPos(texture2D(particleTexture, ref));
-                    float cur = max(1.0 - distance(nowPos2, nowPos) / d, 0.0), cur2 = cur * cur;
-                    rho += cur2;
-                    rhoNear += cur2 * cur;
+                    vec2 mirrorPos1 = vec2(nowPos2.x, -nowPos2.y);
+                    vec2 mirrorPos2 = vec2(-nowPos2.x, nowPos2.y);
+                    vec2 mirrorPos3 = vec2(sceneWidth * 2.0 - nowPos2.x, nowPos2.y);
+                    float cur, cur2;
+                    #define editRho(posI, posJ) cur = getRho(posI, posJ), cur2 = cur * cur, rho += cur2, rhoNear += cur2 * cur
+                    editRho(nowPos, nowPos2);
+                    editRho(nowPos, mirrorPos1);
+                    editRho(nowPos, mirrorPos2);
+                    editRho(nowPos, mirrorPos3);
+                    #undef editRho
                 }
                 gl_FragColor = vec4(k * (rho - rho0), kNear * rhoNear, nowPos);
             }
@@ -58,7 +66,7 @@
             const float gravityR = 50.0;
             const float gravityParameter = gravity / (gravityR * gravityR * gravityR);
             const float eps = 1e-6;
-            
+
             vec2 getPressure(in vec2 posI, in vec2 posJ, in float pNear, in float p)
             {
                 vec2 delta = posI - posJ;
@@ -66,7 +74,7 @@
                 float len_ = max(1.0 - len / d, 0.0);
                 return ((pNear * len_ + p) * len_) * (delta / len);
             }
-            
+
             void main()
             {
                 vec2 uv = gl_FragCoord.xy / resolution.xy;
